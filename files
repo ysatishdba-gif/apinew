@@ -1,90 +1,27 @@
-API-main/
-│   .dockerignore
-│   .env.example
-│   .gitignore
-│   CHANGELOG.md
-│   Dockerfile
-│   README.md
-│   azure-pipelines-for-app-config.yml
-│   azure-pipelines-for-app-image.yml
-│   gunicorn_config.py
-│   requirements.txt
-│
-├── .azuredevops/
-│       PULL_REQUEST_TEMPLATE.md
-│
-├── app/
-│   │   __init__.py
-│   │   action_finder.py
-│   │   config.py
-│   │   exceptions.py
-│   │   main.py
-│   │   mod_intent_extraction.py
-│   │   mod_requests.py
-│   │   record_type_name_to_cui.json
-│   │   temporal_name_to_cui.json
-│   │
-│   ├── middleware/
-│   │       logging_middleware.py
-│   │
-│   ├── prompts/
-│   │   │   __init__.py
-│   │   │   prompt_intent_extraction.py
-│   │   │   prompt_query_expansion.py
-│   │   └── v2/
-│   │           action_finder.py
-│   │           contextual_environment.py
-│   │           intent_extraction.py
-│   │           query_expansion.py
-│   │           representative_terms.py
-│   │           temporal_canonical_block.py     ← NEW
-│   │
-│   └── utils/
-│           Location.py
-│           __init__.py
-│           action_gate.py
-│           cadence_memory.py                   ← NEW
-│           concept_vocab.py
-│           context_lonic_document_cluster.py
-│           dtree_signals.py
-│           generation_config.py
-│           retrieval_signals.py
-│           temporal_canonical.py               ← NEW
-│           temporal_index.py                   ← NEW
-│           temporal_vocab.py
-│           tracing.py
-│
-├── config/
-│       .env.aif
-│       .env.dev
-│       .env.prod
-│       .env.stage
-│       .env.test
-│       .env.secrets.dev      (empty)
-│       .env.secrets.prod     (empty)
-│       .env.secrets.stage    (empty)
-│       .env.secrets.test     (empty)
-│
-├── docs/
-│       CONFLUENCE-retrieval-signals.md
-│       openapi-retrieval-signals.yaml
-│
-├── scripts/                                    ← NEW folder
-│       build_cadence_memory.py
-│       evaluate_temporal.py
-│       replay_retrieval_signals.py
-│
-└── tests/
-        __init__.py
-        conftest.py
-        deep_integration_check.py
-        ruff.toml
-        test_dtree_retrieval_signals.py
-        test_json_parsing.py
-        test_mod_request.py
-        test_pipeline.py
-        test_pipeline_v2.py
-        test_retrieval_signals.py
-        test_retrieval_signals_v2.py
-        test_retrieval_signals_v3.py            ← NEW
-        test_tracer.py
+Current issues:
+
+Record-type CUIs are blank
+
+Names are generated correctly.
+Cluster matching returns no usable document members or BigQuery rows.
+Result preserves names but returns "coding": [].
+Document matching is still dependent on exact member-name lookup
+
+Lookup is now case/whitespace-insensitive.
+Semantic/alias differences still produce no BigQuery match.
+Temporal output falls back to the default
+
+The live model often returns no structured window.
+The AIF temporal vocabulary currently builds with zero canonical windows.
+The resolver therefore falls back to Less Than One Year.
+Tag CUIs are blank
+
+No tag vocabulary is configured for v2/v3.
+Tags such as medications have names/topics but no coding.
+Record type names are model-dependent
+
+If the LLM emits no record types, the cluster service has nothing to match.
+There is no deterministic fallback record-type generator.
+Live latency is high
+
+The latest live request took about 84 seconds, mainly from multiple LLM calls and cluster lookups.
