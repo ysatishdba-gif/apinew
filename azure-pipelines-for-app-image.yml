@@ -1,0 +1,250 @@
+resources:
+  repositories:
+    - repository: modn
+      type: git
+      name: Mayo Open Developer Network/modn-deployment-templates
+
+trigger:
+  branches:
+    include:
+      - main
+      - aif/*
+  paths:
+    exclude:
+      - config/*
+      - test/*
+      - pipeline/*
+      - azure-pipelines.yml
+      - azure-pipelines-for-app-config.yml
+      - azure-pipelines-tests.yml
+      - cloudbuild.yaml
+      - README.md
+
+variables:
+  - name: NON_PRODUCTION_IMAGE_URL
+    value: $(ARTIFACT_REGISTRY)/$(NON_PRODUCTION_ARTIFACT_REGISTRY_PROJECT_ID)/$(REGISTRY_REPOSITORY)/$(IMAGE_NAME):$(IMAGE_TAG)
+  - name: PRODUCTION_IMAGE_URL
+    value: $(ARTIFACT_REGISTRY)/$(PRODUCTION_ARTIFACT_REGISTRY_PROJECT_ID)/$(REGISTRY_REPOSITORY)/$(IMAGE_NAME):$(IMAGE_TAG)
+  - name: AIF_IMAGE_URL
+    value: $(ARTIFACT_REGISTRY)/$(AIF_ARTIFACT_REGISTRY_PROJECT_ID)/$(AIF_REGISTRY_REPOSITORY)/$(IMAGE_NAME):$(IMAGE_TAG)  
+  - name: ARTIFACT_REGISTRY
+    value: "us-central1-docker.pkg.dev"
+  - name: NON_PRODUCTION_ARTIFACT_REGISTRY_PROJECT_ID
+    value: "ops-np-711135098460"
+  - name: PRODUCTION_ARTIFACT_REGISTRY_PROJECT_ID
+    value: "ops-905374065791"
+  - name: AIF_ARTIFACT_REGISTRY_PROJECT_ID
+    value: "aif-usr-p-ep-cg-wcdm-0767"
+  - name: REGISTRY_REPOSITORY
+    value: "artifact-repository"
+  - name: AIF_REGISTRY_REPOSITORY
+    value: "aif-docker-us-central1-5f03"
+  - name: IMAGE_NAME
+    value: "ode-nature-breakdown-api"
+  - name: IMAGE_TAG
+    value: "$(Build.BuildId)"
+
+
+stages:
+  - stage: Build
+    displayName: Build
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: Lint
+        displayName: Lint with Ruff
+        steps:
+          - checkout: self
+          - task: Bash@3
+            displayName: Install & Run Ruff
+            inputs:
+              targetType: inline
+              script: |
+                pip3 install ruff
+                # Run lint-check (add --fix if you want auto-fixing)
+                ruff check .
+                # Run formatting check (add --fix if you want auto-formatting)
+                ruff format --check .
+
+      - job: Test
+        displayName: Run Unit Tests
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.12"
+              addToPath: true
+
+          - task: PipAuthenticate@1
+            inputs:
+              artifactFeeds: KMD
+
+          - script: |
+              pip install -r requirements.txt
+              pip install pytest httpx
+            displayName: Install dependencies from private feed
+
+          - script: |
+              pytest --junitxml=test-results.xml
+            displayName: Run unit tests with pytest
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFiles: "**/test-results.xml"
+              testRunTitle: "Pytest Results"
+            condition: succeededOrFailed()
+
+      - job: Build
+        displayName: Build
+        dependsOn:
+          - Lint
+          - Test
+        steps:
+          - checkout: self
+          - task: PipAuthenticate@1
+            inputs:
+              artifactFeeds: KMD
+              onlyAddExtraIndex: true
+
+          - task: Bash@3
+            displayName: Docker build
+            inputs:
+              targetType: "inline"
+              script: "docker build --build-arg 'PIP_EXTRA_INDEX_URL=$(PIP_EXTRA_INDEX_URL)' -t $(NON_PRODUCTION_IMAGE_URL) ."
+            env:
+              PIP_EXTRA_INDEX_URL: $(PIP_EXTRA_INDEX_URL)
+
+          - task: Bash@3
+            displayName: Save image tar file
+            inputs:
+              targetType: "inline"
+              script: "docker image save -o $(Build.ArtifactStagingDirectory)/image.tar $(NON_PRODUCTION_IMAGE_URL)"
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish image to pipeline
+            inputs:
+              artifactName: containerImage
+              targetPath: "$(Build.ArtifactStagingDirectory)/image.tar"
+
+  - stage: PublishCAFNonProd
+    displayName: CAF non-prod - Publish Container Image
+    dependsOn:
+      - Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Publish
+        displayName: Publish
+        pool:
+          name: MCC Applications
+        steps:
+          - checkout: self
+          - template: containers/download-and-load-container-image.yml@modn
+
+          - template: containers/docker-login-and-push-using-service-connection.yml@modn
+            parameters:
+              serviceConnectionName: "KMD - CAF - Care Guidance non-prod"
+              imageUrlWithoutTag: "$(NON_PRODUCTION_ARTIFACT_REGISTRY_PROJECT_ID)/$(REGISTRY_REPOSITORY)/$(IMAGE_NAME)"
+
+          - template: containers/docker-container-cleanup.yml@modn
+            parameters:
+              imageUrl: "$(NON_PRODUCTION_IMAGE_URL)"
+
+  - stage: PublishCAFProd
+    displayName: CAF prod - Publish Container Image
+    dependsOn:
+      - Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Publish
+        displayName: Publish
+        pool:
+          name: MCC Applications
+        steps:
+          - checkout: self
+
+          - template: containers/download-and-load-container-image.yml@modn
+
+          - bash: |
+              docker tag $(NON_PRODUCTION_IMAGE_URL) $(PRODUCTION_IMAGE_URL)
+            displayName: Retag image
+
+          - template: containers/docker-login-and-push-using-service-connection.yml@modn
+            parameters:
+              serviceConnectionName: "KMD - CAF - Care Guidance prod"
+              imageUrlWithoutTag: "$(PRODUCTION_ARTIFACT_REGISTRY_PROJECT_ID)/$(REGISTRY_REPOSITORY)/$(IMAGE_NAME)"
+
+          - template: containers/docker-container-cleanup.yml@modn
+            parameters:
+              imageUrl: "$(PRODUCTION_IMAGE_URL)"
+
+  - stage: PublishAIF
+    displayName: AIF - Publish Container Image
+    dependsOn:
+      - Build
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/heads/aif/')))
+    jobs:
+      - job: Publish
+        displayName: Publish to AIF Registry
+        pool:
+          name: MCC Applications
+        steps:
+          - checkout: self
+
+          - template: containers/download-and-load-container-image.yml@modn
+
+          - task: DownloadSecureFile@1
+            name: download_gcp_creds_file
+            displayName: 'Download GCP secure file credentials'
+            inputs:
+              secureFile: aif-usr-p-ep-cg-wcdm-0767-95a41955531c.json
+
+          - task: Bash@3
+            displayName: "Docker Login to AIF Artifact Registry"
+            inputs:
+              targetType: "inline"
+              script: |
+                cat "$(download_gcp_creds_file.secureFilePath)" | docker login -u _json_key --password-stdin https://us-central1-docker.pkg.dev
+
+          - bash: |
+              docker tag $(NON_PRODUCTION_IMAGE_URL) $(AIF_IMAGE_URL)
+            displayName: Retag image for AIF
+
+          - task: Bash@3
+            displayName: "Push Image to AIF Artifact Registry"
+            inputs:
+              targetType: "inline"
+              script: |
+                docker push $(AIF_IMAGE_URL)
+
+          - template: containers/docker-container-cleanup.yml@modn
+            parameters:
+              imageUrl: "$(AIF_IMAGE_URL)"
+
+          - task: ImportExportVariables@1
+            displayName: Export build variables
+            inputs:
+              action: "Export"
+
+  - stage: Finalized
+    displayName: Finalize
+    dependsOn:
+      - PublishCAFNonProd
+      - PublishCAFProd
+      - PublishAIF
+    condition: and(eq(variables['Build.SourceBranch'], 'refs/heads/main'), in(dependencies.PublishCAFNonProd.result, 'Succeeded'), in(dependencies.PublishCAFProd.result, 'Succeeded'), in(dependencies.PublishAIF.result, 'Succeeded'))
+    jobs:
+      - job: Finalized
+        displayName: Finalize
+        pool:
+          name: MCC Applications
+        steps:
+          - checkout: self
+            persistCredentials: true
+
+          - script: |
+              git tag $(IMAGE_TAG)
+              git push origin $(IMAGE_TAG)
+            workingDirectory: $(Build.SourcesDirectory)
+
+          - task: ImportExportVariables@1
+            inputs:
+              action: "Export"
