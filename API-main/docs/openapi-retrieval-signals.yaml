@@ -1,0 +1,546 @@
+# OpenAPI 3.1 fragment — POST /v1/retrieval-signals · POST /v2/retrieval-signals · GET /v2/retrieval-signals/action-types
+paths:
+  /v1/retrieval-signals:
+    post:
+      summary: Extract normalized retrieval signals for one or more clinical queries
+      description: >
+        Accepts one or more clinical query strings and returns normalized record
+        types, a temporal validity window, and representative tags — each with
+        UMLS codes — per query, keyed by a generated id. Each text array item is
+        treated as one complete query, so commas within an item are preserved.
+        Each query is
+        processed independently through the pipeline and returns its own block
+        in output.queries. `record_types`, `temporal`, and `tags` may be
+        supplied as optional structured hints: a hinted `temporal` overrides
+        the derived window; hinted `record_types` / `tags` are merged ahead of
+        derived values and deduped by name. LLM failures map to 429/502/503/504
+        with detail {error, message, details} — identical to /v1/nature-breakdown
+        and /v2/nature-breakdown.
+      operationId: dtreeRetrievalSignals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalSignalsRequest'
+            examples:
+              minimal:
+                summary: Two queries, no hints
+                value:
+                  queries:
+                    - text:
+                        - chest x-ray reports from the last year
+                        - HbA1c results in past 3 months
+              list_text:
+                summary: Two queries with commas preserved in the first query
+                value:
+                  queries:
+                    - text:
+                        - chest x-ray reports from the last year, including follow-up
+                        - tell me a joke
+              with_hints:
+                summary: One query with a temporal hint
+                value:
+                  queries:
+                    - text: chest x-ray reports
+                      temporal:
+                        name: Last 6 Months
+                        formula: [REF_POINT, REF_POINT - 6M]
+                        coding: [{ system: UMLS, code: C0332177 }]
+      responses:
+        '200':
+          description: Retrieval signals per query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalSignalsResponse'
+              examples:
+                success:
+                  value:
+                    status: 1
+                    output:
+                      total_queries: 1
+                      queries:
+                        - id: q1
+                          text: chest x-ray reports from the last year
+                          record_types:
+                            - name: Radiology Report
+                              coding: [{ code: C0034571 }]
+                            - name: Clinical Note
+                              coding: [{ code: C1961136 }]
+                          temporal:
+                            name: Last One Year
+                            formula: [REF_POINT, REF_POINT - 1Y]
+                            coding: [{ system: UMLS, code: C4722677 }]
+                          tags:
+                            - name: Chest X-ray
+                              coding: []
+                              topics: [imaging, radiology, chest]
+                    details:
+                      timing: { total_llm_seconds: 4.2, max_llm_seconds: 4.2 }
+                      usage_metadata: {}
+                      version: 1.1.0
+                      timestamp: '2026-08-12T18:00:00'
+                    service: intent-nature-breakdown-api-1.1.0
+        '422':
+          description: >
+            Validation error. Structural problems (empty queries array, missing
+            text) return the FastAPI/Pydantic error body. Content problems
+            (whitespace-only text) return the service's
+            standard detail shape:
+            {"detail": {"error": "validation_error", "message": "...", "query_index": 0}}.
+        '429':
+          description: 'LLM rate limit exceeded. detail: {"error": "rate_limit_exceeded", "message": "...", "details": {}}'
+        '502':
+          description: 'LLM error. detail: {"error": "llm_error", "message": "...", "details": {}}'
+        '503':
+          description: 'LLM service unavailable. detail: {"error": "service_unavailable", "message": "...", "details": {}}'
+        '504':
+          description: 'LLM call timed out. detail: {"error": "llm_timeout", "message": "...", "details": {}}'
+        '500':
+          description: Unhandled server error.
+      tags: [retrieval-signals]
+
+  /v2/retrieval-signals/action-types:
+    get:
+      summary: List selectable Action Finder action types
+      description: >
+        Returns the action types that can be passed in `actions` to
+        POST /v2/retrieval-signals.
+      operationId: dtreeRetrievalSignalActionTypes
+      responses:
+        '200':
+          description: Selectable actions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enable_action_finder: { type: boolean, examples: [true] }
+                  actions:
+                    type: array
+                    items: { $ref: '#/components/schemas/ActionType' }
+              examples:
+                success:
+                  value:
+                    enable_action_finder: true
+                    actions:
+                      - admin_response
+                      - conversational_response
+                      - information_retrieval
+                      - knowledge_fact_search
+                      - out_of_scope
+      tags: [retrieval-signals]
+
+  /v2/retrieval-signals:
+    post:
+      summary: Extract retrieval signals with Action Finder gating and document-cluster record-type CUIs
+      description: >
+        Same contract as /v1/retrieval-signals (request body, envelope, per-query
+        block, hints, validation and LLM error mapping) with two differences.
+        (1) Optional `actions`: when supplied (and `enable_action_finder` is true)
+        each query is first classified in-process by the Action Finder; retrieval
+        signals are computed only for queries whose identified actions overlap
+        `actions` and include information_retrieval. Every other query returns a
+        skip block (`skipped: true`, `skip_reason`, `skip_reason_detail`) with
+        HTTP 200. Unknown action names are a 422. Action Finder failures fail
+        open (the query is processed). (2) `record_types[].coding` is resolved
+        through the document-cluster service (cluster selection + BigQuery)
+        instead of the record_type_name_to_cui.json vocabulary; when that
+        dependency is not configured or fails the endpoint answers 503
+        cluster_service_unavailable. `details.usage_metadata` additionally
+        reports the `action_finder` step.
+      operationId: dtreeRetrievalSignalsV2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalSignalsRequestV2'
+            examples:
+              gated:
+                summary: Two queries gated on information_retrieval
+                value:
+                  actions: [information_retrieval]
+                  queries:
+                    - text:
+                        - chest x-ray reports from the last year
+                        - book me a cardiology appointment Tuesday
+              ungated:
+                summary: No actions — identical behaviour to /v1 apart from record-type coding
+                value:
+                  queries:
+                    - text:
+                        - HbA1c results in past 3 months
+      responses:
+        '200':
+          description: Retrieval signals (or a skip block) per query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalSignalsResponseV2'
+              examples:
+                gated:
+                  value:
+                    status: 1
+                    output:
+                      total_queries: 2
+                      queries:
+                        - id: q1
+                          text: chest x-ray reports from the last year
+                          record_types:
+                            - name: Radiology Report
+                              coding: [{ code: C0034571 }, { code: C0011923 }]
+                          temporal:
+                            name: Last One Year
+                            formula: [REF_POINT, REF_POINT - 1Y]
+                            coding: [{ system: UMLS, code: C4722677 }]
+                          tags:
+                            - name: Chest X-ray
+                              coding: []
+                              topics: [imaging, radiology, chest]
+                        - id: q2
+                          text: book me a cardiology appointment Tuesday
+                          skipped: true
+                          skip_reason: [admin_response]
+                          skip_reason_detail: Action Finder classified this query as admin_response
+                          record_types: []
+                          temporal: null
+                          tags: []
+                    details:
+                      timing: { total_llm_seconds: 4.2, max_llm_seconds: 4.2, max_llm_seconds_input_index: 0 }
+                      usage_metadata:
+                        action_finder: { prompt_token_count: 1800, candidates_token_count: 20, total_token_count: 1820, thinking_token_count: 0 }
+                        query_expansion: {}
+                        intent_extraction: {}
+                        representative_terms: {}
+                        contextual_environment: {}
+                      version: 1.4.0
+                      timestamp: '2026-09-23T14:02:11.120334+00:00'
+                      source: null
+                      model: gemini-3.5-flash
+                      location: us
+                    service: intent-nature-breakdown-api-1.4.0
+        '422':
+          description: >
+            Validation error. As /v1, plus an unknown action name in `actions`:
+            {"detail": {"error": "validation_error", "message": "Unknown action type(s): [...]", "invalid_actions": [...]}}.
+        '429':
+          description: 'LLM rate limit exceeded. detail: {"error": "rate_limit_exceeded", "message": "...", "details": {}}'
+        '502':
+          description: 'LLM error. detail: {"error": "llm_error", "message": "...", "details": {}}'
+        '503':
+          description: >
+            LLM service unavailable (detail.error "service_unavailable"), or the
+            document-cluster dependency is not configured / failed
+            (detail.error "cluster_service_unavailable", details.missing_settings
+            or details.error_type).
+        '504':
+          description: 'LLM call timed out. detail: {"error": "llm_timeout", "message": "...", "details": {}}'
+        '500':
+          description: Unhandled server error.
+      tags: [retrieval-signals]
+
+  /v3/retrieval-signals:
+    post:
+      summary: Extract retrieval signals with canonical temporal windows (indexed vocabulary, per-candidate windows)
+      description: >
+        Same request, response schema and per-query block as /v1 and /v2 (Action
+        Finder gate and document-cluster record types as /v2). Only the temporal
+        MATCHING changes: the temporal vocabulary is never sent to the model; it
+        is indexed in-process at startup, the model states each window as a
+        structured span and code resolves it to the vocabulary entry with that
+        formula (else the narrowest vocabulary window that contains it, else the
+        widest). `temporal` is the same single object as /v1 — a vocabulary name,
+        its CUIs and its formula, chosen by the same projection. Record-type names
+        are generated by the same /v1 prompt; their coding comes from the document
+        cluster with the /v1 vocabulary match as the fallback. Nothing is added to
+        the response. When the temporal vocabulary could not be indexed at startup
+        the endpoint answers 503 temporal_index_unavailable (/v1 and /v2 are
+        unaffected).
+      operationId: dtreeRetrievalSignalsV3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalSignalsRequestV2'
+            examples:
+              no-time-expression:
+                summary: A query with no time wording still gets per-candidate windows
+                value:
+                  actions: [information_retrieval]
+                  queries:
+                    - text:
+                        - patient with diabetes
+              explicit-span:
+                summary: A stated span is transcribed, never converted
+                value:
+                  queries:
+                    - text:
+                        - discharge summaries from previous 36 months
+      responses:
+        '200':
+          description: Retrieval signals (or a skip block) per query, with per-candidate temporal windows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalSignalsResponseV2'
+              examples:
+                no-time-expression:
+                  value:
+                    status: 1
+                    output:
+                      total_queries: 1
+                      queries:
+                        - id: q1
+                          text: patient with diabetes
+                          record_types:
+                            - name: Progress Note
+                              coding: [{ system: UMLS, code: C0747978 }]
+                          temporal:
+                            name: Past 2 years
+                            formula: [REF_POINT, REF_POINT - 2Y]
+                            coding: [{ system: UMLS, code: C4082120 }]
+                          tags: []
+                    details:
+                      timing: { total_llm_seconds: 5.1, max_llm_seconds: 5.1, max_llm_seconds_input_index: 0 }
+                      usage_metadata:
+                        action_finder: {}
+                        query_expansion: {}
+                        intent_extraction: {}
+                        representative_terms: {}
+                        contextual_environment: {}
+                      version: 1.5.8
+                      timestamp: '2026-09-23T14:02:11.120334+00:00'
+                      source: null
+                      model: gemini-3.5-flash
+                      location: us
+                    service: intent-nature-breakdown-api-1.5.8
+        '422':
+          description: As /v2.
+        '429':
+          description: 'LLM rate limit exceeded. detail: {"error": "rate_limit_exceeded", "message": "...", "details": {}}'
+        '502':
+          description: 'LLM error. detail: {"error": "llm_error", "message": "...", "details": {}}'
+        '503':
+          description: >
+            As /v2 (service_unavailable, cluster_service_unavailable), plus
+            detail.error "temporal_index_unavailable" when the temporal vocabulary
+            could not be indexed at startup.
+        '504':
+          description: 'LLM call timed out. detail: {"error": "llm_timeout", "message": "...", "details": {}}'
+        '500':
+          description: Unhandled server error.
+      tags: [retrieval-signals]
+
+components:
+  schemas:
+    Coding:
+      type: object
+      required: [code]
+      properties:
+        system: { type: string, default: UMLS, examples: [UMLS] }
+        code: { type: string, minLength: 1, examples: [C0034571] }
+
+    RecordTypeCoding:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string, minLength: 1, examples: [C0034571] }
+
+    RecordTypeSignal:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, examples: [Radiology Report] }
+        coding:
+          type: array
+          items: { $ref: '#/components/schemas/RecordTypeCoding' }
+
+    TemporalSignal:
+      type: object
+      properties:
+        name: { type: [string, 'null'], examples: [Last One Year] }
+        formula:
+          type: [array, 'null']
+          items: { type: string }
+          examples: [[REF_POINT, REF_POINT - 1Y]]
+        coding:
+          type: array
+          items: { $ref: '#/components/schemas/Coding' }
+
+    TagSignal:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, examples: [Chest X-ray] }
+        coding:
+          type: array
+          items: { $ref: '#/components/schemas/Coding' }
+        topics:
+          type: array
+          items: { type: string }
+          examples: [[imaging, radiology, chest]]
+
+    RetrievalSignalsQuery:
+      type: object
+      required: [text]
+      properties:
+        text:
+          oneOf:
+            - type: string
+              minLength: 1
+            - type: array
+              minItems: 1
+              items: { type: string, minLength: 1 }
+          description: Clinical query string, or a list of complete query strings. Use a list when query text may contain commas.
+        record_types:
+          type: array
+          items: { $ref: '#/components/schemas/RecordTypeSignal' }
+          description: Optional hints, merged ahead of derived values
+        temporal:
+          oneOf:
+            - $ref: '#/components/schemas/TemporalSignal'
+            - type: 'null'
+          description: Optional hint; overrides the derived window
+        tags:
+          type: array
+          items: { $ref: '#/components/schemas/TagSignal' }
+          description: Optional hints, merged ahead of derived values
+
+    RetrievalSignalsRequest:
+      type: object
+      required: [queries]
+      properties:
+        queries:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/RetrievalSignalsQuery' }
+        model_name:
+          type: [string, 'null']
+          description: Model override (defaults to MODEL_VERSION). Must be an allowed Gemini model.
+          enum:
+            - gemini-2.5-flash
+            - gemini-2.5-flash-lite
+            - gemini-3.1-flash-lite
+            - gemini-3.5-flash
+            - gemini-3.6-flash
+            - gemini-3.7-flash
+            - gemini-3.8-flash
+            - gemini-3.5-flash-lite
+        generation_config: { type: [object, 'null'], description: Generation configuration override }
+
+    ActionType:
+      type: string
+      enum:
+        - admin_response
+        - conversational_response
+        - information_retrieval
+        - knowledge_fact_search
+        - out_of_scope
+
+    RetrievalSignalsRequestV2:
+      allOf:
+        - $ref: '#/components/schemas/RetrievalSignalsRequest'
+        - type: object
+          properties:
+            actions:
+              type: [array, 'null']
+              items: { $ref: '#/components/schemas/ActionType' }
+              description: >
+                Optional expected activity types. When supplied, each query is
+                first classified by the Action Finder (in-process); retrieval
+                signals are computed only for queries whose identified actions
+                overlap this list and include information_retrieval.
+                Non-matching queries return a skip block. Omitted or empty: no gating.
+              examples: [[information_retrieval]]
+            enable_action_finder:
+              type: boolean
+              default: true
+              description: >
+                Enable Action Finder gating when actions are supplied. Set false
+                to compute retrieval signals for every query regardless of actions.
+
+    QueryRetrievalSignalsSkipped:
+      type: object
+      description: Returned in place of a signals block for a query the Action Finder gate declined.
+      required: [id, text, skipped, skip_reason, skip_reason_detail, record_types, temporal, tags]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        skipped: { type: boolean, enum: [true] }
+        skip_reason:
+          type: array
+          description: Actions the Action Finder identified for the query (machine-readable).
+          items: { $ref: '#/components/schemas/ActionType' }
+        skip_reason_detail:
+          type: string
+          examples: [Action Finder classified this query as admin_response]
+        record_types: { type: array, maxItems: 0, items: {} }
+        temporal: { type: 'null' }
+        tags: { type: array, maxItems: 0, items: {} }
+
+    RetrievalSignalsResponseV2:
+      allOf:
+        - $ref: '#/components/schemas/RetrievalSignalsResponse'
+        - type: object
+          properties:
+            output:
+              type: object
+              properties:
+                total_queries: { type: integer }
+                queries:
+                  type: array
+                  items:
+                    oneOf:
+                      - $ref: '#/components/schemas/QueryRetrievalSignals'
+                      - $ref: '#/components/schemas/QueryRetrievalSignalsSkipped'
+            details:
+              type: object
+              properties:
+                usage_metadata:
+                  type: object
+                  description: Token usage per step; /v2 adds `action_finder` ahead of the four pipeline steps.
+
+    QueryRetrievalSignals:
+      type: object
+      required: [id, text]
+      properties:
+        id: { type: string }
+        text:
+          type: array
+          minItems: 1
+          items: { type: string }
+        record_types:
+          type: array
+          items: { $ref: '#/components/schemas/RecordTypeSignal' }
+        temporal:
+          oneOf:
+            - $ref: '#/components/schemas/TemporalSignal'
+            - type: 'null'
+        tags:
+          type: array
+          items: { $ref: '#/components/schemas/TagSignal' }
+    RetrievalSignalsResponse:
+      type: object
+      required: [status, output, details, service]
+      properties:
+        status:
+          type: integer
+          description: 1 on success (LLM failures abort the request with 429/5xx, same as the other endpoints)
+        output:
+          type: object
+          properties:
+            total_queries: { type: integer }
+            queries:
+              type: array
+              items: { $ref: '#/components/schemas/QueryRetrievalSignals' }
+        details:
+          type: object
+          properties:
+            timing: { type: object }
+            usage_metadata: { type: object }
+            version: { type: string }
+            timestamp: { type: string, format: date-time }
+        service: { type: string }
