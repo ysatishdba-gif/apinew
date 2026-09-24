@@ -1,9 +1,6 @@
-PROJECT_ID=
+GCP_PROJECT_ID=your-project-id
 GCP_LOCATION=us
 MODEL_VERSION=gemini-3.5-flash
-TEST_VARIABLE=AIF
-TEMPORAL_GCS_BUCKET=
-TEMPORAL_GCS_PATH=Nature_breakdown/temporal_name_to_cui.json
 # ============================================================================
 # >>> UPDATE PER ENVIRONMENT: document-cluster service + BigQuery (needed by /v2 and /v3) <<<
 # Without CLUSTER_SELECTION_URL and CLUSTER_BQ_DATASET, /v2 and /v3 answer 503 cluster_service_unavailable.
