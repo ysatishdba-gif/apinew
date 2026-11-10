@@ -1,95 +1,53 @@
+I expanded the table from 16 to 30 rows and rebuilt the CUI lookup against it. Of the 284 usable CUIs, 167 now match their row exactly (up from 106), and the loosest remaining fit is about 1.5× where it was 2× before.
 
-Label
+Expanded table
 
-Value
+New rows are in bold. “CUIs” is how many CUIs from your JSON map to the row.
 
-Note
+Label	Value (days)	CUIs	Example CUI from JSON
+Most recent	0	0	none in JSON
+All	NULL	37	open-ended wording only
+≤ 1 hour	0.0417	39	C5454751 (1H^max)
+≤ 4 hours	0.1667	26	C1292426 (4 Hours)
+≤ 12 hours	0.5	19	C1275574 (1/2day)
+≤ 24 hours	1	18	C3897986 (Past 24 Hours)
+≤ 48 hours	2	10	C4526586 (Last 2 Days)
+≤ 72 hours	3	7	C1442459 (3 Days)
+≤ 5 days	5	6	C1442466 (5 Days)
+≤ 7 days	7	16	C2987125 (Past Week)
+≤ 10 days	10	3	C1547061 (10 days)
+≤ 2 weeks	14	9	C4288440 (Past 2 Weeks)
+≤ 3 weeks	21	7	C1442462 (3 Weeks)
+≤ 4 weeks	28	4	C3828653 (Past 4 Weeks)
+≤ 30 days	30	7	C4331910 (Past 30 days)
+≤ 6 weeks	42	3	C5452880 (6 weeks)
+≤ 2 months	60	4	C1442456 (2 Months)
+≤ 12 weeks	84	2	ranges only
+≤ 3 months	90	7	C4086725 (Past 3 Months)
+≤ 4 months	120	2	ranges only
+≤ 6 months	180	8	C3828652 (Past 6 Months)
+≤ 9 months	270	2	C5452978 (9 months)
+≤ 12 months	365	19	C4086728 (Past Year)
+≤ 18 months	540	0	none in JSON
+≤ 2 years	730	6	C4299034 (2 years)
+≤ 3 years	1095	5	C3843792 (In past 3 years)
+≤ 4 years	1460	4	C5453208 (4 years)
+≤ 5 years	1825	7	C5452979 (5 years)
+≤ 10 years	3650	5	C3843825 (Past ten years)
+≤ 20 years	7300	2	ranges only
 
-Most recent
+Things to know about the new rows:
 
-0
+The three sub-day rows need the value field to accept fractions, and most of their CUIs are the bare amounts I flagged for review (“120 minutes”, “30M post”), which may be durations.
+≤ 18 months has no CUI in your JSON. I added it because it is a common clinical window, but it will never match until a CUI is sourced for it.
+≤ 12 weeks, ≤ 4 months and ≤ 20 years have only range wording (“6-12 Weeks”, “1-4 months”), with no plain “past 12 weeks” CUI.
+Gaps that a days row cannot fix
 
- 
+These need a rule or a new field, so I did not add them as rows:
 
-All
+Most recent and All still have no CUI. Nothing in the JSON means “latest”, “current”, “ever” or “lifetime”. I tried to confirm UMLS CUIs for these by web search and could not, so someone with UMLS access needs to source them.
+“More than X ago” (35 CUIs) still goes to All. To keep these, the lookup needs an “older than” flag alongside the row.
+“Since an event” (last visit, admission, surgery, this pregnancy) still goes to All, the same as “from diagnosis”.
+“Last N results” for comparisons, such as the latest CT plus the prior one, is a count and has no row.
 
-NULL
-
-includes "from diagnosis", until we augment the service with ability to reference a diagnosis date
-
-≤ 7 days
-
-7
-
- 
-
-≤ 2 weeks
-
-14
-
- 
-
-≤ 30 days
-
-30
-
- 
-
-≤ 6 weeks
-
-42
-
- 
-
-≤ 2 months
-
-60
-
- 
-
-≤ 3 months
-
-90
-
- 
-
-≤ 6 months
-
-180
-
- 
-
-≤ 12 months
-
-365
-
- 
-
-≤ 2 years
-
-730
-
- 
-
-≤ 3 years
-
-1095
-
- 
-
-≤ 5 years
-
-1825
-
- 
-
-≤ 10 years
-
-3650
-
- 
-
-Acceptance criteria
-
-
-Any temporal values are mapped to the most restricted category to which they are able to be included, e.g. “≤ 4 years” would map to “≤ 5 years”.
+The 1,215 excluded CUIs (lab timing, dosing frequency, age bands, billing) are unchanged in cui_to_bucket.csv and should still return no match.
