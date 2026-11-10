@@ -1,0 +1,95 @@
+
+Label
+
+Value
+
+Note
+
+Most recent
+
+0
+
+ 
+
+All
+
+NULL
+
+includes "from diagnosis", until we augment the service with ability to reference a diagnosis date
+
+≤ 7 days
+
+7
+
+ 
+
+≤ 2 weeks
+
+14
+
+ 
+
+≤ 30 days
+
+30
+
+ 
+
+≤ 6 weeks
+
+42
+
+ 
+
+≤ 2 months
+
+60
+
+ 
+
+≤ 3 months
+
+90
+
+ 
+
+≤ 6 months
+
+180
+
+ 
+
+≤ 12 months
+
+365
+
+ 
+
+≤ 2 years
+
+730
+
+ 
+
+≤ 3 years
+
+1095
+
+ 
+
+≤ 5 years
+
+1825
+
+ 
+
+≤ 10 years
+
+3650
+
+ 
+
+Acceptance criteria
+
+
+Any temporal values are mapped to the most restricted category to which they are able to be included, e.g. “≤ 4 years” would map to “≤ 5 years”.
